@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -262,6 +263,11 @@ func extractMetadata(targetURL string) (*MetadataResponse, error) {
 		return nil, fmt.Errorf("invalid URL scheme: only http and https are supported")
 	}
 
+	// SSRF Protection: Check if the target is a blocked address
+	if err := validateURLForSSRF(parsedURL); err != nil {
+		return nil, err
+	}
+
 	// Fetch the URL with custom user agent
 	client := &http.Client{
 		Timeout: 30 * time.Second,
@@ -434,6 +440,79 @@ func contains(slice []string, item string) bool {
 			return true
 		}
 	}
+	return false
+}
+
+// validateURLForSSRF checks if a URL is safe to fetch (SSRF protection)
+func validateURLForSSRF(parsedURL *url.URL) error {
+	host := parsedURL.Hostname()
+	
+	// Resolve the hostname to IP addresses
+	ips, err := net.LookupIP(host)
+	if err != nil {
+		return fmt.Errorf("failed to resolve hostname: %v", err)
+	}
+
+	// Check each resolved IP
+	for _, ip := range ips {
+		if isBlockedIP(ip) {
+			return fmt.Errorf("access to private/internal IP addresses is not allowed: %s", ip.String())
+		}
+	}
+
+	return nil
+}
+
+// isBlockedIP checks if an IP address should be blocked (SSRF protection)
+func isBlockedIP(ip net.IP) bool {
+	// Block localhost
+	if ip.IsLoopback() {
+		return true
+	}
+
+	// Block private networks
+	if ip.IsPrivate() {
+		return true
+	}
+
+	// Block link-local addresses (169.254.0.0/16 for IPv4, fe80::/10 for IPv6)
+	if ip.IsLinkLocalUnicast() {
+		return true
+	}
+
+	// Block multicast addresses
+	if ip.IsMulticast() {
+		return true
+	}
+
+	// Additional checks for IPv4
+	if ipv4 := ip.To4(); ipv4 != nil {
+		// Block 0.0.0.0/8
+		if ipv4[0] == 0 {
+			return true
+		}
+		
+		// Block 169.254.0.0/16 (AWS metadata service and link-local)
+		if ipv4[0] == 169 && ipv4[1] == 254 {
+			return true
+		}
+		
+		// Block 127.0.0.0/8 (loopback, extra check)
+		if ipv4[0] == 127 {
+			return true
+		}
+		
+		// Block 224.0.0.0/4 (multicast, extra check)
+		if ipv4[0] >= 224 && ipv4[0] <= 239 {
+			return true
+		}
+		
+		// Block 240.0.0.0/4 (reserved)
+		if ipv4[0] >= 240 {
+			return true
+		}
+	}
+
 	return false
 }
 
