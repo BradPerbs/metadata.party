@@ -2,7 +2,6 @@
 
 A lightweight, production-ready Go API for extracting metadata from URLs. Perfect for link previews, social media cards, and content analysis.
 
-[![CI](https://github.com/BradPerbs/metadata.party/workflows/CI/badge.svg)](https://github.com/BradPerbs/metadata.party/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Go Version](https://img.shields.io/badge/Go-1.21+-00ADD8?logo=go)](https://golang.org/doc/devel/release.html)
 
