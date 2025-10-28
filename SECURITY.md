@@ -14,7 +14,7 @@ We take the security of metadata.party seriously. If you believe you have found 
 
 **Please do not report security vulnerabilities through public GitHub issues.**
 
-Instead, please send an email to [your-email@example.com] with:
+Instead, please send an email to [bradperbs@gmail.com] with:
 
 * A description of the vulnerability
 * Steps to reproduce the issue
