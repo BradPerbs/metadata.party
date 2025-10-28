@@ -2,19 +2,23 @@
 
 A lightweight, production-ready Go API for extracting metadata from URLs. Perfect for link previews, social media cards, and content analysis.
 
-[![CI](https://github.com/yourusername/metadata.party/workflows/CI/badge.svg)](https://github.com/yourusername/metadata.party/actions)
+[![CI](https://github.com/BradPerbs/metadata.party/workflows/CI/badge.svg)](https://github.com/BradPerbs/metadata.party/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Go Version](https://img.shields.io/badge/Go-1.21+-00ADD8?logo=go)](https://golang.org/doc/devel/release.html)
 
 ## Features
 
-- ✨ Extract page title, description, images, and favicons
+- ✨ Extract page title, description, and images
 - 🏷️ Parse Open Graph and Twitter Card metadata
+- 🎨 Fetch favicons automatically
+- ⚡ Fast extraction with duration metrics
 - 🔢 **Batch processing: extract up to 5 URLs concurrently**
-- 🔒 **SSRF protection: blocks private/internal IP addresses**
-- ⚡ Fast with duration metrics and concurrent processing
+- 🔒 Production-ready with security best practices
 - 🐳 Docker support with health checks
-- 🌐 CORS support and graceful shutdown
+- 🌐 CORS support for browser requests
+- 📊 Request logging middleware
+- 🛡️ Graceful shutdown handling
+- 🚦 Rate limiting ready (via reverse proxy)
 
 ## Installation
 
@@ -188,30 +192,70 @@ docker-compose down
 | `PORT` | Server port | `8080` |
 | `ALLOWED_ORIGIN` | CORS allowed origin | `*` |
 
-## Production Deployment
+## Production Considerations
 
-For production use, consider:
+### Security
 
-- 🔐 **Add authentication** for public deployments
-- 🚧 **Rate limiting** via reverse proxy (nginx, Caddy, Cloudflare)
-- 🌍 **CORS**: Set `ALLOWED_ORIGIN` environment variable to your domain
-- 📊 **Monitoring**: Track resource usage and set container limits
-- 🔒 **HTTPS**: Always use HTTPS in production
+- ⚠️ **SSRF Protection**: Consider implementing IP filtering to prevent SSRF attacks
+- 🔐 **Authentication**: Add authentication layer for public deployments
+- 🚧 **Rate Limiting**: Implement rate limiting via reverse proxy (nginx, Caddy)
+- 🌍 **CORS**: Set `ALLOWED_ORIGIN` to your domain in production
 
-## What Metadata is Extracted?
+### Performance
 
-- **title**: Page title
-- **description**: Page description  
-- **images**: Open Graph and Twitter Card images
-- **sitename**: Site name
-- **favicon**: Site favicon
-- **duration**: Extraction time (milliseconds)
-- **domain**: Domain name
-- **url**: Original URL
+- 📦 **Body Size Limit**: Responses are limited to 10MB
+- ⏱️ **Timeout**: 30 second timeout for fetching URLs
+- 🔄 **Redirects**: Maximum 10 redirects allowed
+- 💾 **Memory**: Use container limits in production
+
+### Recommended Setup
+
+```nginx
+# Example nginx configuration for rate limiting
+limit_req_zone $binary_remote_addr zone=metadata:10m rate=10r/s;
+
+server {
+    listen 80;
+    server_name api.yourdomain.com;
+
+    location / {
+        limit_req zone=metadata burst=20 nodelay;
+        proxy_pass http://localhost:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+}
+```
+
+## Metadata Extracted
+
+The API extracts the following metadata:
+
+- **title**: Page title (from `<title>`, `og:title`, or `twitter:title`)
+- **description**: Page description (from meta description, `og:description`, or `twitter:description`)
+- **images**: Array of images (from `og:image` and `twitter:image`)
+- **sitename**: Site name (from `og:site_name`)
+- **favicon**: Site favicon (from `<link rel="icon">` or default `/favicon.ico`)
+- **duration**: Time taken to extract metadata (in milliseconds)
+- **domain**: Domain name of the URL
+- **url**: Original URL requested
+
+## Error Handling
+
+The API returns appropriate HTTP status codes:
+
+- `200 OK`: Successful metadata extraction
+- `400 Bad Request`: Invalid request (missing URL, invalid JSON)
+- `405 Method Not Allowed`: Wrong HTTP method
+- `500 Internal Server Error`: Failed to fetch or parse URL
+
+## Contributing
+
+We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for details.
 
 ## Security
 
-Built-in SSRF protection blocks requests to private/internal networks. For more details, see [SECURITY.md](SECURITY.md).
+For security concerns, please see [SECURITY.md](SECURITY.md).
 
 ## Deployment Examples
 
@@ -254,11 +298,12 @@ gcloud run deploy metadata-api \
 
 ## Roadmap
 
-- [ ] Caching layer (Redis/in-memory)
-- [ ] Rate limiting middleware
-- [ ] Authentication options (API keys, JWT)
-- [ ] More metadata types (JSON-LD, microdata)
-- [ ] Metrics endpoint (Prometheus)
+- [ ] Add caching layer (Redis)
+- [ ] Implement rate limiting middleware
+- [ ] Add authentication options
+- [ ] Support for more metadata types (JSON-LD, microdata)
+- [ ] WebSocket support for real-time extraction
+- [ ] Metrics and monitoring endpoints (Prometheus)
 
 ## License
 
