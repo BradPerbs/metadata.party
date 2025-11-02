@@ -9,13 +9,13 @@ echo ""
 
 # Check if server is running
 echo "1️⃣  Health Check"
-curl -s http://localhost:8080/health | jq .
+curl -s http://localhost:8759/health | jq .
 echo ""
 echo ""
 
 # Root endpoint
 echo "2️⃣  API Info"
-curl -s http://localhost:8080/ | jq .
+curl -s http://localhost:8759/ | jq .
 echo ""
 echo ""
 

@@ -17,7 +17,7 @@ A lightweight, production-ready Go API for extracting metadata from URLs. Perfec
 - 🌐 CORS support for browser requests
 - 📊 Request logging middleware
 - 🛡️ Graceful shutdown handling
-- 🚦 Rate limiting ready (via reverse proxy)
+- 🚦 Built-in rate limiting (15 req/min per IP, unlimited with API key from https://metadata.party/)
 
 ## Installation
 
@@ -35,7 +35,7 @@ go mod download
 go run main.go
 ```
 
-The server will start on `http://localhost:8080`
+The server will start on `http://localhost:8759`
 
 ## API Endpoints
 
@@ -47,7 +47,7 @@ Extract metadata from 1-5 URLs. The endpoint automatically detects single vs. ba
 
 **Request:**
 ```bash
-curl -X POST http://localhost:8080/extract \
+curl -X POST http://localhost:8759/extract \
   -H "Content-Type: application/json" \
   -d '{"url": "https://zapier.com/blog/best-crm-app/"}'
 ```
@@ -72,7 +72,7 @@ curl -X POST http://localhost:8080/extract \
 
 **Request:**
 ```bash
-curl -X POST http://localhost:8080/extract \
+curl -X POST http://localhost:8759/extract \
   -H "Content-Type: application/json" \
   -d '{
     "urls": [
@@ -129,13 +129,40 @@ curl -X POST http://localhost:8080/extract \
 - If a URL fails in batch mode, it returns with an `error` field
 - Results are returned in the same order as input
 
+#### Rate Limiting
+
+By default, the API limits requests to **15 per minute per IP address**. To bypass this limit, provide an API key:
+
+**Using Header:**
+```bash
+curl -X POST http://localhost:8759/extract \
+  -H "Content-Type: application/json" \
+  -H "X-API-Key: your-secret-api-key" \
+  -d '{"url": "https://example.com"}'
+```
+
+**Using Query Parameter:**
+```bash
+curl -X POST "http://localhost:8759/extract?api_key=your-secret-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://example.com"}'
+```
+
+**Rate Limit Response:**
+When rate limit is exceeded, you'll receive a `429 Too Many Requests` response:
+```json
+{
+  "error": "Rate limit exceeded. Maximum 15 requests per minute. Please try again later or use an API key for unlimited access."
+}
+```
+
 ### GET /health
 
 Health check endpoint.
 
 **Request:**
 ```bash
-curl http://localhost:8080/health
+curl http://localhost:8759/health
 ```
 
 **Response:**
@@ -164,9 +191,10 @@ go build -o metadata-api
 docker build -t metadata-api .
 
 # Run the container
-docker run -p 8080:8080 \
-  -e PORT=8080 \
+docker run -p 8759:8759 \
+  -e PORT=8759 \
   -e ALLOWED_ORIGIN=https://yourdomain.com \
+  -e API_KEY=your-secret-api-key \
   --name metadata-api \
   metadata-api
 ```
@@ -188,17 +216,19 @@ docker-compose down
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `PORT` | Server port | `8080` |
+| `PORT` | Server port | `8759` |
 | `ALLOWED_ORIGIN` | CORS allowed origin | `*` |
+| `API_KEY` | API key for unlimited requests (bypasses rate limit) | _(none)_ |
 
 ## Production Considerations
 
 ### Security
 
-- ⚠️ **SSRF Protection**: Consider implementing IP filtering to prevent SSRF attacks
-- 🔐 **Authentication**: Add authentication layer for public deployments
-- 🚧 **Rate Limiting**: Implement rate limiting via reverse proxy (nginx, Caddy)
+- ✅ **SSRF Protection**: Built-in IP filtering to prevent SSRF attacks
+- ✅ **Rate Limiting**: Built-in rate limiting (15 req/min per IP)
+- 🔐 **API Key**: Set `API_KEY` environment variable for unlimited access
 - 🌍 **CORS**: Set `ALLOWED_ORIGIN` to your domain in production
+- 🔒 **API Key Security**: Keep your API key secret and use HTTPS in production
 
 ### Performance
 
@@ -210,18 +240,17 @@ docker-compose down
 ### Recommended Setup
 
 ```nginx
-# Example nginx configuration for rate limiting
-limit_req_zone $binary_remote_addr zone=metadata:10m rate=10r/s;
-
+# Example nginx configuration with API key forwarding
 server {
     listen 80;
     server_name api.yourdomain.com;
 
     location / {
-        limit_req zone=metadata burst=20 nodelay;
-        proxy_pass http://localhost:8080;
+        proxy_pass http://localhost:8759;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-API-Key $http_x_api_key;
     }
 }
 ```
@@ -246,6 +275,7 @@ The API returns appropriate HTTP status codes:
 - `200 OK`: Successful metadata extraction
 - `400 Bad Request`: Invalid request (missing URL, invalid JSON)
 - `405 Method Not Allowed`: Wrong HTTP method
+- `429 Too Many Requests`: Rate limit exceeded
 - `500 Internal Server Error`: Failed to fetch or parse URL
 
 ## Contributing
@@ -298,8 +328,8 @@ gcloud run deploy metadata-api \
 ## Roadmap
 
 - [ ] Add caching layer (Redis)
-- [ ] Implement rate limiting middleware
-- [ ] Add authentication options
+- [x] Implement rate limiting middleware
+- [x] Add API key authentication
 - [ ] Support for more metadata types (JSON-LD, microdata)
 - [ ] WebSocket support for real-time extraction
 - [ ] Metrics and monitoring endpoints (Prometheus)

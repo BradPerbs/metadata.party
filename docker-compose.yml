@@ -4,13 +4,15 @@ services:
   metadata-api:
     build: .
     ports:
-      - "8080:8080"
+      - "8759:8759"
     environment:
-      - PORT=8080
+      - PORT=8759
       - ALLOWED_ORIGIN=*
+      # Uncomment and set your API key for unlimited requests
+      # - API_KEY=your-secret-api-key-here
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8080/health"]
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8759/health"]
       interval: 30s
       timeout: 3s
       retries: 3

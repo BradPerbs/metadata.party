@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -44,6 +45,99 @@ type MetadataResult struct {
 	Error string `json:"error,omitempty"`
 }
 
+// RateLimiter manages rate limiting per IP address
+type RateLimiter struct {
+	visitors map[string]*Visitor
+	mu       sync.RWMutex
+	rate     int           // requests per minute
+	interval time.Duration // cleanup interval
+}
+
+// Visitor tracks request timestamps for an IP
+type Visitor struct {
+	requests []time.Time
+	mu       sync.Mutex
+}
+
+// NewRateLimiter creates a new rate limiter
+func NewRateLimiter(requestsPerMinute int) *RateLimiter {
+	rl := &RateLimiter{
+		visitors: make(map[string]*Visitor),
+		rate:     requestsPerMinute,
+		interval: time.Minute,
+	}
+	
+	// Start cleanup goroutine to remove old visitors
+	go rl.cleanupVisitors()
+	
+	return rl
+}
+
+// cleanupVisitors removes visitors that haven't made requests recently
+func (rl *RateLimiter) cleanupVisitors() {
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+	
+	for range ticker.C {
+		rl.mu.Lock()
+		for ip, visitor := range rl.visitors {
+			visitor.mu.Lock()
+			if len(visitor.requests) == 0 || time.Since(visitor.requests[len(visitor.requests)-1]) > 10*time.Minute {
+				delete(rl.visitors, ip)
+			}
+			visitor.mu.Unlock()
+		}
+		rl.mu.Unlock()
+	}
+}
+
+// getVisitor returns the visitor for an IP, creating one if needed
+func (rl *RateLimiter) getVisitor(ip string) *Visitor {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	
+	visitor, exists := rl.visitors[ip]
+	if !exists {
+		visitor = &Visitor{
+			requests: []time.Time{},
+		}
+		rl.visitors[ip] = visitor
+	}
+	
+	return visitor
+}
+
+// Allow checks if a request should be allowed
+func (rl *RateLimiter) Allow(ip string) bool {
+	visitor := rl.getVisitor(ip)
+	
+	visitor.mu.Lock()
+	defer visitor.mu.Unlock()
+	
+	now := time.Now()
+	cutoff := now.Add(-rl.interval)
+	
+	// Remove requests older than the time window
+	validRequests := []time.Time{}
+	for _, reqTime := range visitor.requests {
+		if reqTime.After(cutoff) {
+			validRequests = append(validRequests, reqTime)
+		}
+	}
+	visitor.requests = validRequests
+	
+	// Check if under the rate limit
+	if len(visitor.requests) >= rl.rate {
+		return false
+	}
+	
+	// Add current request
+	visitor.requests = append(visitor.requests, now)
+	return true
+}
+
+var rateLimiter *RateLimiter
+
 func main() {
 	// Get port from environment variable or use default
 	port := os.Getenv("PORT")
@@ -51,14 +145,17 @@ func main() {
 		port = "8759"
 	}
 
+	// Initialize rate limiter (15 requests per minute by default)
+	rateLimiter = NewRateLimiter(15)
+
 	// Setup routes with middleware
 	mux := http.NewServeMux()
 	mux.HandleFunc("/extract", extractMetadataHandler)
 	mux.HandleFunc("/health", healthCheckHandler)
 	mux.HandleFunc("/", rootHandler)
 
-	// Wrap with logging and CORS middleware
-	handler := loggingMiddleware(corsMiddleware(mux))
+	// Wrap with logging, rate limiting, and CORS middleware
+	handler := loggingMiddleware(rateLimitMiddleware(corsMiddleware(mux)))
 
 	// Create server with timeouts
 	server := &http.Server{
@@ -73,6 +170,7 @@ func main() {
 	go func() {
 		log.Printf("🚀 Metadata extraction API running on http://localhost:%s\n", port)
 		log.Println("📝 Usage: POST /extract with JSON body: {\"url\": \"https://example.com\"}")
+		log.Println("⏱️  Rate limit: 15 requests per minute per IP (unlimited with valid API key)")
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("Error starting server: %v\n", err)
 		}
@@ -114,6 +212,69 @@ func loggingMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+// Middleware for rate limiting
+func rateLimitMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Check for API key in header or query parameter
+		apiKey := r.Header.Get("X-API-Key")
+		if apiKey == "" {
+			apiKey = r.URL.Query().Get("api_key")
+		}
+		
+		// Get the valid API key from environment
+		validAPIKey := os.Getenv("API_KEY")
+		
+		// If API key is provided and valid, bypass rate limiting
+		if validAPIKey != "" && apiKey == validAPIKey {
+			next.ServeHTTP(w, r)
+			return
+		}
+		
+		// Extract IP address
+		ip := getClientIP(r)
+		
+		// Check rate limit
+		if !rateLimiter.Allow(ip) {
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("X-RateLimit-Limit", "15")
+			w.Header().Set("X-RateLimit-Window", "1m")
+			w.WriteHeader(http.StatusTooManyRequests)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "Rate limit exceeded. Maximum 15 requests per minute. Please try again later or use an API key for unlimited access.",
+			})
+			return
+		}
+		
+		next.ServeHTTP(w, r)
+	})
+}
+
+// getClientIP extracts the real client IP from the request
+func getClientIP(r *http.Request) string {
+	// Check X-Forwarded-For header (for proxies/load balancers)
+	xff := r.Header.Get("X-Forwarded-For")
+	if xff != "" {
+		// X-Forwarded-For can contain multiple IPs, take the first one
+		ips := strings.Split(xff, ",")
+		if len(ips) > 0 {
+			return strings.TrimSpace(ips[0])
+		}
+	}
+	
+	// Check X-Real-IP header
+	xri := r.Header.Get("X-Real-IP")
+	if xri != "" {
+		return xri
+	}
+	
+	// Fall back to RemoteAddr
+	ip, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return ip
+}
+
 // Middleware for CORS
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -125,7 +286,7 @@ func corsMiddleware(next http.Handler) http.Handler {
 
 		w.Header().Set("Access-Control-Allow-Origin", allowedOrigin)
 		w.Header().Set("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, X-API-Key")
 
 		// Handle preflight requests
 		if r.Method == "OPTIONS" {
@@ -150,6 +311,11 @@ func rootHandler(w http.ResponseWriter, r *http.Request) {
 		"endpoints": map[string]string{
 			"POST /extract": "Extract metadata from 1-5 URLs (use 'url' for single or 'urls' for batch)",
 			"GET /health":   "Health check endpoint",
+		},
+		"rateLimit": map[string]interface{}{
+			"default":     "15 requests per minute per IP",
+			"withApiKey":  "Unlimited requests",
+			"apiKeyUsage": "Pass API key via 'X-API-Key' header or 'api_key' query parameter",
 		},
 		"docs": "https://github.com/yourusername/metadata.party",
 	})
