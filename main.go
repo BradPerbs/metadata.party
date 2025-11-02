@@ -147,6 +147,14 @@ func main() {
 
 	// Initialize rate limiter (15 requests per minute by default)
 	rateLimiter = NewRateLimiter(15)
+	
+	// Check if API key is configured
+	apiKey := strings.TrimSpace(os.Getenv("API_KEY"))
+	if apiKey != "" {
+		log.Printf("🔑 API key configured (length: %d characters)", len(apiKey))
+	} else {
+		log.Println("⚠️  No API key configured - all requests will be rate limited")
+	}
 
 	// Setup routes with middleware
 	mux := http.NewServeMux()
@@ -216,16 +224,22 @@ func loggingMiddleware(next http.Handler) http.Handler {
 func rateLimitMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Check for API key in header or query parameter
-		apiKey := r.Header.Get("X-API-Key")
+		apiKey := strings.TrimSpace(r.Header.Get("X-API-Key"))
 		if apiKey == "" {
-			apiKey = r.URL.Query().Get("api_key")
+			apiKey = strings.TrimSpace(r.URL.Query().Get("api_key"))
 		}
 		
-		// Get the valid API key from environment
-		validAPIKey := os.Getenv("API_KEY")
+		// Get the valid API key from environment (trim whitespace)
+		validAPIKey := strings.TrimSpace(os.Getenv("API_KEY"))
+		
+		// Debug logging (remove in production if needed)
+		if apiKey != "" {
+			log.Printf("API Key provided (length: %d), Valid key configured: %v", len(apiKey), validAPIKey != "")
+		}
 		
 		// If API key is provided and valid, bypass rate limiting
-		if validAPIKey != "" && apiKey == validAPIKey {
+		if validAPIKey != "" && apiKey != "" && apiKey == validAPIKey {
+			log.Printf("✅ API key validated - bypassing rate limit for %s", getClientIP(r))
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -235,6 +249,7 @@ func rateLimitMiddleware(next http.Handler) http.Handler {
 		
 		// Check rate limit
 		if !rateLimiter.Allow(ip) {
+			log.Printf("⚠️  Rate limit exceeded for IP: %s", ip)
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("X-RateLimit-Limit", "15")
 			w.Header().Set("X-RateLimit-Window", "1m")
