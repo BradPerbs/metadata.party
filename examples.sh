@@ -25,7 +25,7 @@ curl -s -X POST http://localhost:8759/extract \
   -H "Content-Type: application/json" \
   -d '{"url": "https://zapier.com/blog/best-crm-app/"}' | jq .
 echo ""
-echo ""
+echo "" 
 
 # Extract metadata from a news site
 echo "4️⃣  Extract metadata from a news site"
