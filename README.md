@@ -350,6 +350,10 @@ Built with:
 - ⭐ Star this repo if you find it useful
 - 🔄 Fork and submit PRs for contributions
 
+## Sponsors
+
+[![Cloudblast.io - Cloud VM Hosting](https://cloudblast.io/_nuxt/logo-icon.DmhfkCLY.svg)](https://cloudblast.io)
+
 ---
 
 Made with ❤️ for the open-source community
